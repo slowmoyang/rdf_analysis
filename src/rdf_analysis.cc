@@ -1,10 +1,22 @@
 #include "rdf_analysis/rdf_analysis.h"
 
 #include "ROOT/RDataFrame.hxx"
+#include "ROOT/RDFHelpers.hxx"
+#include <cmath>
+#include <cstdint>
 
 
-RDFAnalysis::RDFAnalysis(const fs::path path, const std::string tree_name) {
+RDFAnalysis::RDFAnalysis(
+    const fs::path path,
+    const std::string tree_name,
+    const bool do_cutflow,
+    const bool add_progress_bar)
+    : do_cutflow_(do_cutflow){
   node_vec_.emplace_back(RDataFrame{tree_name, path.c_str()});
+
+  if (add_progress_bar) {
+    ROOT::RDF::Experimental::AddProgressBar(back());
+  }
 }
 
 void RDFAnalysis::run(std::function<RNode(RNode&)> action) {
@@ -18,15 +30,6 @@ void RDFAnalysis::define(const std::string name, const std::string expr, const b
   }
 }
 
-// https://github.com/root-project/root/blob/v6-30-04/tree/dataframe/inc/ROOT/RDF/RInterface.hxx#L337-L341
-template <typename F, typename std::enable_if_t<!std::is_convertible<F, std::string>::value, int> >
-void RDFAnalysis::define(std::string_view name, F expression, const ColumnNames_t &columns, const bool extend) {
-  node_vec_.emplace_back(back().Define(name, std::move(expression), columns));
-  if (extend) {
-    output_branch_vec_.emplace_back(name);
-  }
- }
-
 void RDFAnalysis::alias(const std::string alias, const std::string name, const bool extend) {
   node_vec_.emplace_back(back().Define(alias, name));
   if (extend) {
@@ -35,13 +38,19 @@ void RDFAnalysis::alias(const std::string alias, const std::string name, const b
 }
 
 void RDFAnalysis::filter(const std::string expr, const std::string name) {
+  if (do_cutflow_ and cutflow_.empty()) {
+    cutflow_.emplace_back("total", sum("weight"));
+  }
+
   node_vec_.emplace_back(back().Filter(expr, name));
+
+  if (do_cutflow_) {
+    cutflow_.emplace_back(name, sum("weight"));
+  }
 }
 
-// https://github.com/root-project/root/blob/v6-30-04/tree/dataframe/inc/ROOT/RDF/RInterface.hxx#L214-L228
-template <typename F, std::enable_if_t<!std::is_convertible<F, std::string>::value, int> >
-void RDFAnalysis::filter(F f, const ColumnNames_t &columns, std::string_view name) {
-  node_vec_.emplace_back(back().Filter(std::move(f), columns, name));
+void RDFAnalysis::filter(const std::string expr) {
+  filter(expr, expr);
 }
 
 RNode& RDFAnalysis::back() {
@@ -58,6 +67,14 @@ void RDFAnalysis::extendOutputBranches(const std::vector<std::string>& branch_ve
 
 void RDFAnalysis::snapshot(const std::string& path, const std::string& treepath) {
   back().Snapshot(treepath, path, output_branch_vec_);
+
+  if (do_cutflow_) {
+    TH1D* h_cutflow = makeCutflowHist();
+    auto output_file = TFile::Open(path.c_str(), "UPDATE");
+    h_cutflow->SetDirectory(output_file);
+    output_file->Write();
+    output_file->Close();
+  }
 }
 
 auto RDFAnalysis::report() {
@@ -66,4 +83,23 @@ auto RDFAnalysis::report() {
 
 float RDFAnalysis::sum(const std::string name) {
   return back().Sum(name).GetValue();
+}
+
+
+TH1D* RDFAnalysis::makeCutflowHist() {
+  const int32_t nbinsx = cutflow_.size();
+  const double_t xlow = -0.5;
+  const double_t xup = cutflow_.size() - 0.5;
+
+  auto h_cutflow = new TH1D{"cutflow", "", nbinsx, xlow, xup};
+  for (size_t idx = 0; idx < cutflow_.size(); idx++) {
+    const auto [key, value] = cutflow_.at(idx);
+
+    h_cutflow->Fill(idx, value);
+    h_cutflow->GetXaxis()->SetBinLabel(idx + 1, key.c_str());
+  }
+
+  h_cutflow->GetYaxis()->SetTitle("Sum of Event Weights");
+
+  return h_cutflow;
 }

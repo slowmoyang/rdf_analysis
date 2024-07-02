@@ -15,7 +15,7 @@ root_dep = declare_dependency(
     include_directories: root_incdir
 )
 
-delphes_tools_dep = declare_dependency(
+rdf_analysis_dep = declare_dependency(
   include_directories: include_directories('include'),
   sources: [
     'src/rdf_analysis.cc',
@@ -25,4 +25,4 @@ delphes_tools_dep = declare_dependency(
   ]
 )
 
-meson.override_dependency(meson.project_name(), delphes_tools_dep)
+meson.override_dependency(meson.project_name(), rdf_analysis_dep)
