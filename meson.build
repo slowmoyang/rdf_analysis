@@ -1,5 +1,5 @@
 project(
-  'rdf-analysis',
+  'rdf_analysis',
   'cpp',
   license: 'MIT',
   version: '1.0.0',
